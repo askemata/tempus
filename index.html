@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tempus Fugit</title>
+<style>
+  :root{
+    --bg:#f6f5f1; --panel:#ffffff; --ink:#23241f; --muted:#6b6c64;
+    --accent:#2c5f5a; --accent-light:#e6efed; --border:#e1ddd3; --danger:#a3403a;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--ink); padding:16px; max-width:760px; margin:0 auto;
+  }
+  h1{font-size:1.3rem; margin:0 0 4px;}
+  .sub{color:var(--muted); font-size:.85rem; margin-bottom:16px;}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:14px;}
+  .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+  label{font-size:.8rem; color:var(--muted); display:block; margin-bottom:3px;}
+  input, select{
+    padding:8px 10px; border:1px solid var(--border); border-radius:7px; font-size:.95rem;
+    background:#fff; color:var(--ink);
+  }
+  input[type=date]{min-width:140px;}
+  input[type=number]{width:90px;}
+  input[type=text]{flex:1; min-width:140px;}
+  button{
+    padding:8px 14px; border:none; border-radius:7px; background:var(--accent); color:#fff;
+    font-size:.9rem; cursor:pointer;
+  }
+  button.secondary{background:var(--accent-light); color:var(--accent);}
+  button.danger{background:#fbeae8; color:var(--danger); padding:4px 8px; font-size:.8rem;}
+  button:disabled{opacity:.5; cursor:not-allowed;}
+  .status{font-size:.8rem; color:var(--muted); margin-top:8px;}
+  table{width:100%; border-collapse:collapse; font-size:.9rem; margin-top:10px;}
+  th,td{text-align:left; padding:6px 4px; border-bottom:1px solid var(--border);}
+  th{color:var(--muted); font-weight:600; font-size:.78rem; text-transform:uppercase;}
+  tfoot td{font-weight:700; border-top:2px solid var(--ink); border-bottom:none;}
+  .tabs{display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;}
+  .tabs button{background:transparent; color:var(--muted); border:1px solid var(--border);}
+  .tabs button.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .empty{color:var(--muted); font-size:.85rem; padding:10px 0;}
+  .entry-list{margin-top:8px;}
+  .entry-item{display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); font-size:.9rem;}
+  .entry-item:last-child{border-bottom:none;}
+  .field{display:flex; flex-direction:column;}
+</style>
+</head>
+<body>
+
+<h1>Tempus Fugit</h1>
+<p class="sub">Registre as atividades do dia. O app calcula totais por semana, mês, semestre e ano.</p>
+
+<div class="panel" id="fileControls"></div>
+
+<div class="panel">
+  <div class="field" style="max-width:180px; margin-bottom:10px;">
+    <label for="refDate">Data</label>
+    <input type="date" id="refDate">
+  </div>
+
+  <div class="row" style="margin-bottom:6px;">
+    <div class="field">
+      <label for="activityInput">Atividade</label>
+      <input type="text" id="activityInput" list="activityList" placeholder="Ex: Reunião, Codificação...">
+      <datalist id="activityList"></datalist>
+    </div>
+    <div class="field">
+      <label for="hoursInput">Horas</label>
+      <input type="number" id="hoursInput" step="0.25" min="0" placeholder="0">
+    </div>
+    <button id="addBtn" style="margin-top:18px;">Adicionar</button>
+  </div>
+
+  <div id="dayEntries" class="entry-list"></div>
+</div>
+
+<div class="panel">
+  <div class="tabs" id="periodTabs">
+    <button data-period="dia" class="active">Dia</button>
+    <button data-period="semana">Semana</button>
+    <button data-period="mes">Mês</button>
+    <button data-period="semestre">Semestre</button>
+    <button data-period="ano">Ano</button>
+  </div>
+  <div id="periodLabel" class="sub" style="margin-bottom:6px;"></div>
+  <div id="periodTable"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Estado ----------
+  let entries = [];        // {date:'YYYY-MM-DD', activity, hours}
+  let fileHandle = null;
+  let currentPeriod = 'dia';
+  const hasFS = 'showSaveFilePicker' in window;
+
+  // ---------- Utilidades de data ----------
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function todayStr(){
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+  function parts(dateStr){
+    const [y,m,d] = dateStr.split('-').map(Number);
+    return {y,m,d};
+  }
+  function toUTC(dateStr){
+    const {y,m,d} = parts(dateStr);
+    return new Date(Date.UTC(y, m-1, d));
+  }
+  function fromUTC(date){
+    return `${date.getUTCFullYear()}-${pad(date.getUTCMonth()+1)}-${pad(date.getUTCDate())}`;
+  }
+  function weekRange(dateStr){
+    const date = toUTC(dateStr);
+    const dow = (date.getUTCDay() + 6) % 7; // 0=segunda
+    const mon = new Date(date); mon.setUTCDate(date.getUTCDate() - dow);
+    const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() + 6);
+    return { start: fromUTC(mon), end: fromUTC(sun) };
+  }
+  function fmtHoras(h){
+    return (Math.round(h*100)/100).toString().replace('.', ',');
+  }
+  function fmtDateBR(dateStr){
+    const {y,m,d} = parts(dateStr);
+    return `${pad(d)}/${pad(m)}/${y}`;
+  }
+
+  // ---------- Parser / Serializador Markdown ----------
+  function parseMD(text){
+    const lines = text.split('\n');
+    const result = [];
+    let currentDate = null;
+    for (const raw of lines){
+      const line = raw.trim();
+      const dateMatch = line.match(/^##\s+(\d{4}-\d{2}-\d{2})/);
+      if (dateMatch){ currentDate = dateMatch[1]; continue; }
+      if (line.startsWith('## ')){ currentDate = null; continue; } // ex: "## Resumo geral"
+      const entryMatch = currentDate && line.match(/^-\s*(.+?):\s*([\d.,]+)\s*h/i);
+      if (entryMatch){
+        result.push({
+          date: currentDate,
+          activity: entryMatch[1].trim(),
+          hours: parseFloat(entryMatch[2].replace(',', '.'))
+        });
+      }
+    }
+    return result;
+  }
+
+  function serializeMD(list){
+    const byDate = {};
+    list.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+    const dates = Object.keys(byDate).sort();
+
+    const lines = ['# Registro de Horas de Trabalho', ''];
+    dates.forEach(date => {
+      lines.push(`## ${date}`);
+      byDate[date].forEach(e => lines.push(`- ${e.activity}: ${e.hours}h`));
+      lines.push('');
+    });
+
+    const totals = totalsByActivity(list);
+    const activitiesSorted = Object.keys(totals).sort((a,b) => totals[b]-totals[a]);
+    let grand = 0;
+    lines.push('## Resumo geral');
+    activitiesSorted.forEach(a => { lines.push(`- ${a}: ${totals[a]}h`); grand += totals[a]; });
+    lines.push(`- **Total: ${Math.round(grand*100)/100}h**`);
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  function totalsByActivity(list){
+    const totals = {};
+    list.forEach(e => { totals[e.activity] = (totals[e.activity] || 0) + e.hours; });
+    Object.keys(totals).forEach(k => totals[k] = Math.round(totals[k]*100)/100);
+    return totals;
+  }
+
+  // ---------- Persistência ----------
+  function dbPromise(){
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('registroHorasDB', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('handles');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbSet(key, val){
+    const db = await dbPromise();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(val, key);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  }
+  async function idbGet(key){
+    const db = await dbPromise();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('handles', 'readonly');
+      const req = tx.objectStore('handles').get(key);
+      req.onsuccess = () => res(req.result || null);
+      req.onerror = () => rej(req.error);
+    });
+  }
+
+  function loadLocal(){
+    try { return JSON.parse(localStorage.getItem('registroHorasEntries') || '[]'); }
+    catch(e){ return []; }
+  }
+  function saveLocal(){
+    localStorage.setItem('registroHorasEntries', JSON.stringify(entries));
+  }
+
+  async function writeToFileHandle(){
+    if (!fileHandle) return;
+    try {
+      const writable = await fileHandle.createWritable();
+      await writable.write(serializeMD(entries));
+      await writable.close();
+      setStatus(`Salvo automaticamente em "${fileHandle.name}".`);
+    } catch(err){
+      setStatus('Não foi possível salvar no arquivo: ' + err.message, true);
+    }
+  }
+
+  async function persist(){
+    if (hasFS && fileHandle){
+      await writeToFileHandle();
+    } else {
+      saveLocal();
+      setStatus('Salvo no navegador. Use "Exportar .md" para gerar o arquivo.');
+    }
+  }
+
+  // ---------- Controles de arquivo (FS API) ----------
+  const fileControls = document.getElementById('fileControls');
+
+  function setStatus(msg, isError){
+    let el = document.getElementById('statusLine');
+    if (!el){
+      el = document.createElement('div');
+      el.id = 'statusLine';
+      el.className = 'status';
+      fileControls.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+  }
+
+  async function ensurePermission(handle){
+    const opts = { mode: 'readwrite' };
+    if ((await handle.queryPermission(opts)) === 'granted') return true;
+    if ((await handle.requestPermission(opts)) === 'granted') return true;
+    return false;
+  }
+
+  if (hasFS){
+    fileControls.innerHTML = `
+      <div class="row">
+        <button id="openFileBtn" class="secondary">Abrir arquivo .md</button>
+        <button id="newFileBtn" class="secondary">Criar novo arquivo .md</button>
+      </div>`;
+    document.getElementById('openFileBtn').addEventListener('click', async () => {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }]
+        });
+        if (!(await ensurePermission(handle))) return;
+        fileHandle = handle;
+        await idbSet('fileHandle', handle);
+        const file = await handle.getFile();
+        entries = parseMD(await file.text());
+        renderAll();
+        setStatus(`Arquivo "${handle.name}" aberto e conectado.`);
+      } catch(err){ if (err.name !== 'AbortError') setStatus(err.message, true); }
+    });
+    document.getElementById('newFileBtn').addEventListener('click', async () => {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: 'horas.md',
+          types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }]
+        });
+        fileHandle = handle;
+        await idbSet('fileHandle', handle);
+        entries = [];
+        await writeToFileHandle();
+        renderAll();
+      } catch(err){ if (err.name !== 'AbortError') setStatus(err.message, true); }
+    });
+  } else {
+    fileControls.innerHTML = `
+      <div class="row">
+        <button id="exportBtn" class="secondary">Exportar .md</button>
+        <label class="secondary" style="display:inline-block; padding:8px 14px; border-radius:7px; background:var(--accent-light); color:var(--accent); cursor:pointer;">
+          Importar .md
+          <input type="file" id="importInput" accept=".md" style="display:none;">
+        </label>
+      </div>`;
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      const blob = new Blob([serializeMD(entries)], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'horas.md';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+    document.getElementById('importInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (!confirm('Importar este arquivo vai substituir os dados atuais no navegador. Continuar?')) return;
+      entries = parseMD(await file.text());
+      saveLocal();
+      renderAll();
+      setStatus(`Importado de "${file.name}".`);
+    });
+  }
+
+  // ---------- Inicialização ----------
+  async function init(){
+    document.getElementById('refDate').value = todayStr();
+
+    if (hasFS){
+      const saved = await idbGet('fileHandle');
+      if (saved && (await ensurePermission(saved).catch(() => false))){
+        fileHandle = saved;
+        const file = await fileHandle.getFile();
+        entries = parseMD(await file.text());
+        setStatus(`Conectado a "${fileHandle.name}".`);
+      } else {
+        setStatus('Nenhum arquivo conectado. Abra ou crie um arquivo .md para começar.');
+      }
+    } else {
+      entries = loadLocal();
+      setStatus('Modo navegador: dados salvos localmente. Exporte para gerar o .md.');
+    }
+    renderAll();
+  }
+
+  // ---------- Adicionar / remover ----------
+  document.getElementById('addBtn').addEventListener('click', async () => {
+    const date = document.getElementById('refDate').value;
+    const activity = document.getElementById('activityInput').value.trim();
+    const hours = parseFloat(document.getElementById('hoursInput').value);
+    if (!date){ alert('Escolha uma data.'); return; }
+    if (!activity){ alert('Informe a atividade.'); return; }
+    if (!hours || hours <= 0){ alert('Informe uma carga horária válida.'); return; }
+
+    entries.push({ date, activity, hours });
+    document.getElementById('activityInput').value = '';
+    document.getElementById('hoursInput').value = '';
+    await persist();
+    renderAll();
+  });
+
+  async function removeEntry(index){
+    entries.splice(index, 1);
+    await persist();
+    renderAll();
+  }
+
+  document.getElementById('refDate').addEventListener('change', renderAll);
+
+  // ---------- Abas de período ----------
+  document.getElementById('periodTabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-period]');
+    if (!btn) return;
+    currentPeriod = btn.dataset.period;
+    document.querySelectorAll('#periodTabs button').forEach(b => b.classList.toggle('active', b === btn));
+    renderPeriod();
+  });
+
+  function inPeriod(entryDate, period, ref){
+    if (period === 'dia') return entryDate === ref;
+    const e = parts(entryDate), r = parts(ref);
+    if (period === 'semana'){
+      const { start, end } = weekRange(ref);
+      return entryDate >= start && entryDate <= end;
+    }
+    if (period === 'mes') return e.y === r.y && e.m === r.m;
+    if (period === 'semestre'){
+      const semE = e.m <= 6 ? 1 : 2, semR = r.m <= 6 ? 1 : 2;
+      return e.y === r.y && semE === semR;
+    }
+    if (period === 'ano') return e.y === r.y;
+    return false;
+  }
+
+  function periodLabelText(period, ref){
+    const r = parts(ref);
+    if (period === 'dia') return `Dia: ${fmtDateBR(ref)}`;
+    if (period === 'semana'){
+      const { start, end } = weekRange(ref);
+      return `Semana: ${fmtDateBR(start)} a ${fmtDateBR(end)}`;
+    }
+    if (period === 'mes'){
+      const nomes = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+      return `Mês: ${nomes[r.m-1]} de ${r.y}`;
+    }
+    if (period === 'semestre') return `Semestre: ${r.m <= 6 ? '1º' : '2º'} semestre de ${r.y}`;
+    if (period === 'ano') return `Ano: ${r.y}`;
+  }
+
+  // ---------- Render ----------
+  function renderActivityList(){
+    const datalist = document.getElementById('activityList');
+    const names = [...new Set(entries.map(e => e.activity))];
+    datalist.innerHTML = names.map(n => `<option value="${n}"></option>`).join('');
+  }
+
+  function renderDayEntries(){
+    const date = document.getElementById('refDate').value;
+    const dayList = entries
+      .map((e, i) => ({ ...e, idx: i }))
+      .filter(e => e.date === date);
+    const container = document.getElementById('dayEntries');
+
+    if (dayList.length === 0){
+      container.innerHTML = '<div class="empty">Nenhuma atividade registrada nesta data.</div>';
+      return;
+    }
+    const total = dayList.reduce((s, e) => s + e.hours, 0);
+    container.innerHTML = dayList.map(e => `
+      <div class="entry-item">
+        <span>${e.activity} — ${fmtHoras(e.hours)}h</span>
+        <button class="danger" data-idx="${e.idx}">Excluir</button>
+      </div>`).join('') +
+      `<div class="entry-item" style="border-top:2px solid var(--ink); font-weight:700;">
+        <span>Total do dia</span><span>${fmtHoras(total)}h</span>
+      </div>`;
+    container.querySelectorAll('button[data-idx]').forEach(b => {
+      b.addEventListener('click', () => removeEntry(Number(b.dataset.idx)));
+    });
+  }
+
+  function renderPeriod(){
+    const ref = document.getElementById('refDate').value;
+    document.getElementById('periodLabel').textContent = periodLabelText(currentPeriod, ref);
+
+    const list = entries.filter(e => inPeriod(e.date, currentPeriod, ref));
+    const container = document.getElementById('periodTable');
+
+    if (list.length === 0){
+      container.innerHTML = '<div class="empty">Nenhum registro neste período.</div>';
+      return;
+    }
+    const totals = totalsByActivity(list);
+    const activitiesSorted = Object.keys(totals).sort((a,b) => totals[b]-totals[a]);
+    const grand = activitiesSorted.reduce((s,a) => s + totals[a], 0);
+    const dayCount = new Set(list.map(e => e.date)).size;
+
+    container.innerHTML = `
+      <table>
+        <thead><tr><th>Atividade</th><th>Horas</th></tr></thead>
+        <tbody>
+          ${activitiesSorted.map(a => `<tr><td>${a}</td><td>${fmtHoras(totals[a])}h</td></tr>`).join('')}
+        </tbody>
+        <tfoot><tr><td>Total (${dayCount} dia${dayCount>1?'s':''})</td><td>${fmtHoras(grand)}h</td></tr></tfoot>
+      </table>`;
+  }
+
+  function renderAll(){
+    renderActivityList();
+    renderDayEntries();
+    renderPeriod();
+  }
+
+  // ---------- PWA: manifest + ícone (instalação) ----------
+  try {
+    const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#1f4744"/>
+          <stop offset="1" stop-color="#2c5f5a"/>
+        </linearGradient>
+      </defs>
+      <rect width="100" height="100" rx="18" fill="url(#bg)"/>
+      <rect x="30" y="22" width="40" height="5" rx="2" fill="#f6f5f1"/>
+      <rect x="30" y="73" width="40" height="5" rx="2" fill="#f6f5f1"/>
+      <path d="M32,27 L68,27 L54,50 L68,73 L32,73 L46,50 Z" fill="none" stroke="#f6f5f1" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M36,31 L64,31 L52,46 L48,46 Z" fill="#e3a857"/>
+      <path d="M40,69 L60,69 L50,58 Z" fill="#e3a857"/>
+      <line x1="50" y1="47" x2="50" y2="59" stroke="#e3a857" stroke-width="1.6"/>
+    </svg>`;
+    const iconDataUri = 'data:image/svg+xml,' + encodeURIComponent(iconSvg);
+
+    const favicon = document.createElement('link');
+    favicon.rel = 'icon';
+    favicon.type = 'image/svg+xml';
+    favicon.href = iconDataUri;
+    document.head.appendChild(favicon);
+
+    const manifest = {
+      name: 'Tempus Fugit',
+      short_name: 'Tempus',
+      start_url: '.',
+      display: 'standalone',
+      background_color: '#f6f5f1',
+      theme_color: '#2c5f5a',
+      icons: [
+        { src: iconDataUri, sizes: '192x192', type: 'image/svg+xml' },
+        { src: iconDataUri, sizes: '512x512', type: 'image/svg+xml' }
+      ]
+    };
+    const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = URL.createObjectURL(blob);
+    document.head.appendChild(link);
+  } catch(e){ /* manifest/ícone são apenas extras; ignora se não suportado */ }
+
+  init();
+})();
+</script>
+</body>
+</html>
