@@ -69,7 +69,11 @@
     </div>
     <div class="field">
       <label for="hoursInput">Horas</label>
-      <input type="number" id="hoursInput" step="0.25" min="0" placeholder="0">
+      <input type="number" id="hoursInput" step="1" min="0" placeholder="0">
+    </div>
+    <div class="field">
+      <label for="minutesInput">Minutos</label>
+      <input type="number" id="minutesInput" step="5" min="0" max="59" placeholder="0">
     </div>
     <button id="addBtn" style="margin-top:18px;">Adicionar</button>
   </div>
@@ -123,8 +127,11 @@
     const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() + 6);
     return { start: fromUTC(mon), end: fromUTC(sun) };
   }
-  function fmtHoras(h){
-    return (Math.round(h*100)/100).toString().replace('.', ',');
+  function formatDuration(decimalHours){
+    const totalMin = Math.round(decimalHours * 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return m > 0 ? `${h}h ${m}min` : `${h}h`;
   }
   function fmtDateBR(dateStr){
     const {y,m,d} = parts(dateStr);
@@ -141,13 +148,22 @@
       const dateMatch = line.match(/^##\s+(\d{4}-\d{2}-\d{2})/);
       if (dateMatch){ currentDate = dateMatch[1]; continue; }
       if (line.startsWith('## ')){ currentDate = null; continue; } // ex: "## Resumo geral"
-      const entryMatch = currentDate && line.match(/^-\s*(.+?):\s*([\d.,]+)\s*h/i);
-      if (entryMatch){
-        result.push({
-          date: currentDate,
-          activity: entryMatch[1].trim(),
-          hours: parseFloat(entryMatch[2].replace(',', '.'))
-        });
+      if (currentDate){
+        const hmMatch = line.match(/^-\s*(.+?):\s*(\d+)h(?:\s*(\d+)\s*min)?\s*$/i);
+        const decMatch = !hmMatch && line.match(/^-\s*(.+?):\s*([\d.,]+)\s*h\s*$/i);
+        if (hmMatch){
+          result.push({
+            date: currentDate,
+            activity: hmMatch[1].trim(),
+            hours: parseInt(hmMatch[2], 10) + (hmMatch[3] ? parseInt(hmMatch[3], 10) : 0) / 60
+          });
+        } else if (decMatch){
+          result.push({
+            date: currentDate,
+            activity: decMatch[1].trim(),
+            hours: parseFloat(decMatch[2].replace(',', '.'))
+          });
+        }
       }
     }
     return result;
@@ -161,7 +177,7 @@
     const lines = ['# Registro de Horas de Trabalho', ''];
     dates.forEach(date => {
       lines.push(`## ${date}`);
-      byDate[date].forEach(e => lines.push(`- ${e.activity}: ${e.hours}h`));
+      byDate[date].forEach(e => lines.push(`- ${e.activity}: ${formatDuration(e.hours)}`));
       lines.push('');
     });
 
@@ -169,8 +185,8 @@
     const activitiesSorted = Object.keys(totals).sort((a,b) => totals[b]-totals[a]);
     let grand = 0;
     lines.push('## Resumo geral');
-    activitiesSorted.forEach(a => { lines.push(`- ${a}: ${totals[a]}h`); grand += totals[a]; });
-    lines.push(`- **Total: ${Math.round(grand*100)/100}h**`);
+    activitiesSorted.forEach(a => { lines.push(`- ${a}: ${formatDuration(totals[a])}`); grand += totals[a]; });
+    lines.push(`- **Total: ${formatDuration(grand)}**`);
     lines.push('');
     return lines.join('\n');
   }
@@ -347,14 +363,17 @@
   document.getElementById('addBtn').addEventListener('click', async () => {
     const date = document.getElementById('refDate').value;
     const activity = document.getElementById('activityInput').value.trim();
-    const hours = parseFloat(document.getElementById('hoursInput').value);
+    const h = parseInt(document.getElementById('hoursInput').value, 10) || 0;
+    const m = parseInt(document.getElementById('minutesInput').value, 10) || 0;
+    const hours = h + (m / 60);
     if (!date){ alert('Escolha uma data.'); return; }
     if (!activity){ alert('Informe a atividade.'); return; }
-    if (!hours || hours <= 0){ alert('Informe uma carga horária válida.'); return; }
+    if (hours <= 0){ alert('Informe horas ou minutos.'); return; }
 
     entries.push({ date, activity, hours });
     document.getElementById('activityInput').value = '';
     document.getElementById('hoursInput').value = '';
+    document.getElementById('minutesInput').value = '';
     await persist();
     renderAll();
   });
@@ -428,11 +447,11 @@
     const total = dayList.reduce((s, e) => s + e.hours, 0);
     container.innerHTML = dayList.map(e => `
       <div class="entry-item">
-        <span>${e.activity} — ${fmtHoras(e.hours)}h</span>
+        <span>${e.activity} — ${formatDuration(e.hours)}</span>
         <button class="danger" data-idx="${e.idx}">Excluir</button>
       </div>`).join('') +
       `<div class="entry-item" style="border-top:2px solid var(--ink); font-weight:700;">
-        <span>Total do dia</span><span>${fmtHoras(total)}h</span>
+        <span>Total do dia</span><span>${formatDuration(total)}</span>
       </div>`;
     container.querySelectorAll('button[data-idx]').forEach(b => {
       b.addEventListener('click', () => removeEntry(Number(b.dataset.idx)));
@@ -459,9 +478,9 @@
       <table>
         <thead><tr><th>Atividade</th><th>Horas</th></tr></thead>
         <tbody>
-          ${activitiesSorted.map(a => `<tr><td>${a}</td><td>${fmtHoras(totals[a])}h</td></tr>`).join('')}
+          ${activitiesSorted.map(a => `<tr><td>${a}</td><td>${formatDuration(totals[a])}</td></tr>`).join('')}
         </tbody>
-        <tfoot><tr><td>Total (${dayCount} dia${dayCount>1?'s':''})</td><td>${fmtHoras(grand)}h</td></tr></tfoot>
+        <tfoot><tr><td>Total (${dayCount} dia${dayCount>1?'s':''})</td><td>${formatDuration(grand)}</td></tr></tfoot>
       </table>`;
   }
 
