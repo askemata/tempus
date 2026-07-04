@@ -91,6 +91,7 @@
   </div>
   <div id="periodLabel" class="sub" style="margin-bottom:6px;"></div>
   <div id="periodTable"></div>
+  <canvas id="periodChart" style="margin-top:14px; width:100%; display:none;"></canvas>
 </div>
 
 <script>
@@ -458,6 +459,74 @@
     });
   }
 
+  function renderChart(activitiesSorted, totals){
+    const canvas = document.getElementById('periodChart');
+    if (activitiesSorted.length === 0){ canvas.style.display = 'none'; return; }
+
+    const DPR = window.devicePixelRatio || 1;
+    const W = canvas.parentElement.clientWidth - 2;
+    const PAD = { top:20, right:16, bottom:64, left:52 };
+    const BAR_H = 180;
+    const H = BAR_H + PAD.top + PAD.bottom;
+
+    canvas.style.display = 'block';
+    canvas.width  = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = H + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(DPR, DPR);
+    ctx.clearRect(0, 0, W, H);
+
+    const maxVal = Math.max(...activitiesSorted.map(a => totals[a]));
+    const maxMin = Math.ceil(maxVal * 60 / 30) * 30; // arredonda para múltiplo de 30min
+    const n = activitiesSorted.length;
+    const barW = Math.max(18, Math.min(56, (W - PAD.left - PAD.right) / n * 0.6));
+    const gap  = (W - PAD.left - PAD.right - barW * n) / (n + 1);
+    const chartH = BAR_H;
+
+    // Eixo Y — linhas de grade a cada 30min
+    ctx.strokeStyle = '#e1ddd3';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#6b6c64';
+    ctx.font = `${11 * Math.min(1, W/400)}px system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+
+    const steps = Math.min(6, Math.ceil(maxMin / 30));
+    for (let i = 0; i <= steps; i++){
+      const val = (maxMin / steps) * i;
+      const y = PAD.top + chartH - (val / maxMin) * chartH;
+      ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+      const label = val === 0 ? '0' : formatDuration(val / 60);
+      ctx.fillText(label, PAD.left - 4, y + 4);
+    }
+
+    // Barras
+    const colors = ['#2c5f5a','#3d7a73','#4e9790','#1f4744','#5baca3','#6bbfb6'];
+    activitiesSorted.forEach((act, i) => {
+      const x = PAD.left + gap + i * (barW + gap);
+      const barHeight = (totals[act] / (maxMin / 60)) * chartH;
+      const y = PAD.top + chartH - barHeight;
+
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.beginPath();
+      ctx.roundRect(x, y, barW, barHeight, [4,4,0,0]);
+      ctx.fill();
+
+      // valor no topo
+      ctx.fillStyle = '#23241f';
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${11 * Math.min(1, W/400)}px system-ui, sans-serif`;
+      ctx.fillText(formatDuration(totals[act]), x + barW / 2, y - 5);
+
+      // rótulo abaixo
+      ctx.fillStyle = '#6b6c64';
+      ctx.font = `${11 * Math.min(1, W/400)}px system-ui, sans-serif`;
+      const label = act.length > 12 ? act.slice(0,11) + '…' : act;
+      ctx.fillText(label, x + barW / 2, PAD.top + chartH + 18);
+    });
+  }
+
   function renderPeriod(){
     const ref = document.getElementById('refDate').value;
     document.getElementById('periodLabel').textContent = periodLabelText(currentPeriod, ref);
@@ -467,6 +536,7 @@
 
     if (list.length === 0){
       container.innerHTML = '<div class="empty">Nenhum registro neste período.</div>';
+      document.getElementById('periodChart').style.display = 'none';
       return;
     }
     const totals = totalsByActivity(list);
@@ -482,6 +552,8 @@
         </tbody>
         <tfoot><tr><td>Total (${dayCount} dia${dayCount>1?'s':''})</td><td>${formatDuration(grand)}</td></tr></tfoot>
       </table>`;
+
+    renderChart(activitiesSorted, totals);
   }
 
   function renderAll(){
