@@ -459,14 +459,52 @@
     });
   }
 
-  function renderChart(activitiesSorted, totals){
+  function renderChart(list, period, ref){
     const canvas = document.getElementById('periodChart');
-    if (activitiesSorted.length === 0){ canvas.style.display = 'none'; return; }
+    if (period === 'dia' || list.length === 0){ canvas.style.display = 'none'; return; }
 
+    // --- Agrupar por dimensão temporal do período ---
+    let labels = [], values = [];
+    const mn = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+    if (period === 'semana'){
+      const { start } = weekRange(ref);
+      const dayNames = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'];
+      for (let i = 0; i < 7; i++){
+        const d = new Date(toUTC(start)); d.setUTCDate(d.getUTCDate() + i);
+        const ds = fromUTC(d);
+        labels.push(dayNames[i]);
+        values.push(list.filter(e => e.date === ds).reduce((s,e) => s+e.hours, 0));
+      }
+    } else if (period === 'mes'){
+      const weekMap = {};
+      list.forEach(e => {
+        const ws = weekRange(e.date).start;
+        weekMap[ws] = (weekMap[ws] || 0) + e.hours;
+      });
+      Object.keys(weekMap).sort().forEach(ws => {
+        labels.push(fmtDateBR(ws).slice(0,5)); // dd/mm
+        values.push(weekMap[ws]);
+      });
+    } else if (period === 'semestre'){
+      const r = parts(ref), s0 = r.m <= 6 ? 1 : 7;
+      for (let m = s0; m < s0+6; m++){
+        labels.push(mn[m-1]);
+        values.push(list.filter(e => { const p=parts(e.date); return p.y===r.y && p.m===m; }).reduce((s,e)=>s+e.hours, 0));
+      }
+    } else if (period === 'ano'){
+      const r = parts(ref);
+      for (let m = 1; m <= 12; m++){
+        labels.push(mn[m-1]);
+        values.push(list.filter(e => { const p=parts(e.date); return p.y===r.y && p.m===m; }).reduce((s,e)=>s+e.hours, 0));
+      }
+    }
+
+    // --- Desenhar ---
     const DPR = window.devicePixelRatio || 1;
     const W = canvas.parentElement.clientWidth - 2;
-    const PAD = { top:20, right:16, bottom:64, left:52 };
-    const BAR_H = 180;
+    const PAD = { top:24, right:16, bottom:46, left:54 };
+    const BAR_H = 160;
     const H = BAR_H + PAD.top + PAD.bottom;
 
     canvas.style.display = 'block';
@@ -478,52 +516,51 @@
     ctx.scale(DPR, DPR);
     ctx.clearRect(0, 0, W, H);
 
-    const maxVal = Math.max(...activitiesSorted.map(a => totals[a]));
-    const maxMin = Math.ceil(maxVal * 60 / 30) * 30; // arredonda para múltiplo de 30min
-    const n = activitiesSorted.length;
-    const barW = Math.max(18, Math.min(56, (W - PAD.left - PAD.right) / n * 0.6));
-    const gap  = (W - PAD.left - PAD.right - barW * n) / (n + 1);
-    const chartH = BAR_H;
+    const maxVal = Math.max(...values, 0.01);
+    const maxMin = Math.ceil(maxVal * 60 / 30) * 30;
+    const n = labels.length;
+    const innerW = W - PAD.left - PAD.right;
+    const barW = Math.max(12, Math.min(48, innerW / n * 0.55));
+    const gap  = (innerW - barW * n) / (n + 1);
+    const fs = Math.min(11, Math.max(8, W / 65));
 
-    // Eixo Y — linhas de grade a cada 30min
-    ctx.strokeStyle = '#e1ddd3';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#6b6c64';
-    ctx.font = `${11 * Math.min(1, W/400)}px system-ui, sans-serif`;
-    ctx.textAlign = 'right';
-
+    // Grade e eixo Y
+    ctx.strokeStyle = '#e1ddd3'; ctx.lineWidth = 1;
     const steps = Math.min(6, Math.ceil(maxMin / 30));
     for (let i = 0; i <= steps; i++){
       const val = (maxMin / steps) * i;
-      const y = PAD.top + chartH - (val / maxMin) * chartH;
+      const y = PAD.top + BAR_H - (val / maxMin) * BAR_H;
       ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
-      const label = val === 0 ? '0' : formatDuration(val / 60);
-      ctx.fillText(label, PAD.left - 4, y + 4);
+      ctx.fillStyle = '#6b6c64';
+      ctx.font = `${fs}px system-ui,sans-serif`;
+      ctx.textAlign = 'right';
+      ctx.fillText(val === 0 ? '0' : formatDuration(val / 60), PAD.left - 5, y + 4);
     }
 
     // Barras
-    const colors = ['#2c5f5a','#3d7a73','#4e9790','#1f4744','#5baca3','#6bbfb6'];
-    activitiesSorted.forEach((act, i) => {
+    labels.forEach((lbl, i) => {
+      const v = values[i];
       const x = PAD.left + gap + i * (barW + gap);
-      const barHeight = (totals[act] / (maxMin / 60)) * chartH;
-      const y = PAD.top + chartH - barHeight;
+      const bh = Math.max(0, (v / (maxMin / 60)) * BAR_H);
+      const y = PAD.top + BAR_H - bh;
 
-      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillStyle = v > 0 ? '#2c5f5a' : '#e1ddd3';
       ctx.beginPath();
-      ctx.roundRect(x, y, barW, barHeight, [4,4,0,0]);
+      if (v > 0) ctx.roundRect(x, y, barW, bh, [4,4,0,0]);
+      else        ctx.rect(x, PAD.top + BAR_H - 2, barW, 2);
       ctx.fill();
 
-      // valor no topo
-      ctx.fillStyle = '#23241f';
-      ctx.textAlign = 'center';
-      ctx.font = `bold ${11 * Math.min(1, W/400)}px system-ui, sans-serif`;
-      ctx.fillText(formatDuration(totals[act]), x + barW / 2, y - 5);
+      if (v > 0){
+        ctx.fillStyle = '#23241f';
+        ctx.font = `bold ${fs}px system-ui,sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(formatDuration(v), x + barW/2, y - 5);
+      }
 
-      // rótulo abaixo
       ctx.fillStyle = '#6b6c64';
-      ctx.font = `${11 * Math.min(1, W/400)}px system-ui, sans-serif`;
-      const label = act.length > 12 ? act.slice(0,11) + '…' : act;
-      ctx.fillText(label, x + barW / 2, PAD.top + chartH + 18);
+      ctx.font = `${fs}px system-ui,sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(lbl, x + barW/2, PAD.top + BAR_H + 16);
     });
   }
 
@@ -553,7 +590,7 @@
         <tfoot><tr><td>Total (${dayCount} dia${dayCount>1?'s':''})</td><td>${formatDuration(grand)}</td></tr></tfoot>
       </table>`;
 
-    renderChart(activitiesSorted, totals);
+    renderChart(list, currentPeriod, ref);
   }
 
   function renderAll(){
