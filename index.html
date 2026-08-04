@@ -64,7 +64,7 @@
   <div class="row" style="margin-bottom:6px;">
     <div class="field">
       <label for="activityInput">Atividade</label>
-      <input type="text" id="activityInput" list="activityList" placeholder="Ex: Reunião, Codificação...">
+      <input type="text" id="activityInput" list="activityList" placeholder="Ex: Reunião, Aula X...">
       <datalist id="activityList"></datalist>
     </div>
     <div class="field">
@@ -76,6 +76,10 @@
       <input type="number" id="minutesInput" step="5" min="0" max="59" placeholder="0">
     </div>
     <button id="addBtn" style="margin-top:18px;">Adicionar</button>
+  </div>
+  <div class="field" style="margin-bottom:6px;">
+    <label for="noteInput">O que foi feito? <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+    <input type="text" id="noteInput" placeholder="Ex: Introdução ao capítulo 3, revisão de contratos..." style="width:100%;">
   </div>
 
   <div id="dayEntries" class="entry-list"></div>
@@ -150,19 +154,21 @@
       if (dateMatch){ currentDate = dateMatch[1]; continue; }
       if (line.startsWith('## ')){ currentDate = null; continue; } // ex: "## Resumo geral"
       if (currentDate){
-        const hmMatch = line.match(/^-\s*(.+?):\s*(\d+)h(?:\s*(\d+)\s*min)?\s*$/i);
-        const decMatch = !hmMatch && line.match(/^-\s*(.+?):\s*([\d.,]+)\s*h\s*$/i);
+        const hmMatch = line.match(/^-\s*(.+?):\s*(\d+)h(?:\s*(\d+)\s*min)?(?:\s*\|\s*(.+))?\s*$/i);
+        const decMatch = !hmMatch && line.match(/^-\s*(.+?):\s*([\d.,]+)\s*h(?:\s*\|\s*(.+))?\s*$/i);
         if (hmMatch){
           result.push({
             date: currentDate,
             activity: hmMatch[1].trim(),
-            hours: parseInt(hmMatch[2], 10) + (hmMatch[3] ? parseInt(hmMatch[3], 10) : 0) / 60
+            hours: parseInt(hmMatch[2], 10) + (hmMatch[3] ? parseInt(hmMatch[3], 10) : 0) / 60,
+            note: hmMatch[4] ? hmMatch[4].trim() : ''
           });
         } else if (decMatch){
           result.push({
             date: currentDate,
             activity: decMatch[1].trim(),
-            hours: parseFloat(decMatch[2].replace(',', '.'))
+            hours: parseFloat(decMatch[2].replace(',', '.')),
+            note: decMatch[3] ? decMatch[3].trim() : ''
           });
         }
       }
@@ -178,7 +184,10 @@
     const lines = ['# Registro de Horas de Trabalho', ''];
     dates.forEach(date => {
       lines.push(`## ${date}`);
-      byDate[date].forEach(e => lines.push(`- ${e.activity}: ${formatDuration(e.hours)}`));
+      byDate[date].forEach(e => {
+        const notePart = e.note ? ` | ${e.note}` : '';
+        lines.push(`- ${e.activity}: ${formatDuration(e.hours)}${notePart}`);
+      });
       lines.push('');
     });
 
@@ -366,15 +375,17 @@
     const activity = document.getElementById('activityInput').value.trim();
     const h = parseInt(document.getElementById('hoursInput').value, 10) || 0;
     const m = parseInt(document.getElementById('minutesInput').value, 10) || 0;
+    const note = document.getElementById('noteInput').value.trim();
     const hours = h + (m / 60);
     if (!date){ alert('Escolha uma data.'); return; }
     if (!activity){ alert('Informe a atividade.'); return; }
     if (hours <= 0){ alert('Informe horas ou minutos.'); return; }
 
-    entries.push({ date, activity, hours });
+    entries.push({ date, activity, hours, note });
     document.getElementById('activityInput').value = '';
     document.getElementById('hoursInput').value = '';
     document.getElementById('minutesInput').value = '';
+    document.getElementById('noteInput').value = '';
     await persist();
     renderAll();
   });
@@ -447,9 +458,12 @@
     }
     const total = dayList.reduce((s, e) => s + e.hours, 0);
     container.innerHTML = dayList.map(e => `
-      <div class="entry-item">
-        <span>${e.activity} — ${formatDuration(e.hours)}</span>
-        <button class="danger" data-idx="${e.idx}">Excluir</button>
+      <div class="entry-item" style="flex-direction:column; align-items:flex-start; gap:2px;">
+        <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+          <span style="font-weight:500;">${e.activity} — ${formatDuration(e.hours)}</span>
+          <button class="danger" data-idx="${e.idx}">Excluir</button>
+        </div>
+        ${e.note ? `<span style="font-size:.82rem; color:var(--muted); padding-left:2px;">${e.note}</span>` : ''}
       </div>`).join('') +
       `<div class="entry-item" style="border-top:2px solid var(--ink); font-weight:700;">
         <span>Total do dia</span><span>${formatDuration(total)}</span>
@@ -581,14 +595,51 @@
     const grand = activitiesSorted.reduce((s,a) => s + totals[a], 0);
     const dayCount = new Set(list.map(e => e.date)).size;
 
+    const rowsHTML = activitiesSorted.map(a => {
+      const actEntries = list.filter(e => e.activity === a).sort((x,y) => x.date.localeCompare(y.date));
+      const hasContent = actEntries.some(e => e.note) || actEntries.length > 1;
+      const logRows = actEntries.map(e =>
+        `<tr class="log-row" style="background:var(--accent-light);">
+          <td style="padding-left:16px; font-size:.82rem; color:var(--muted);">${fmtDateBR(e.date)}</td>
+          <td style="font-size:.82rem;">
+            <span style="color:var(--muted);">${formatDuration(e.hours)}</span>
+            ${e.note ? `<span style="color:var(--ink);"> — ${e.note}</span>` : ''}
+          </td>
+        </tr>`
+      ).join('');
+      return `
+        <tr class="act-row" data-act="${a}" style="cursor:${hasContent?'pointer':'default'};">
+          <td>
+            ${a}
+            ${hasContent ? `<span class="toggle-arrow" data-act="${a}" style="font-size:.7rem; color:var(--muted); margin-left:5px; transition:transform .2s; display:inline-block;">▶</span>` : ''}
+          </td>
+          <td>${formatDuration(totals[a])}</td>
+        </tr>
+        <tr class="log-container" data-act="${a}" style="display:none;">
+          <td colspan="2" style="padding:0;">
+            <table style="width:100%; margin:0; border:none;">${logRows}</table>
+          </td>
+        </tr>`;
+    }).join('');
+
     container.innerHTML = `
       <table>
-        <thead><tr><th>Atividade</th><th>Horas</th></tr></thead>
-        <tbody>
-          ${activitiesSorted.map(a => `<tr><td>${a}</td><td>${formatDuration(totals[a])}</td></tr>`).join('')}
-        </tbody>
+        <thead><tr><th>Atividade <span style="font-weight:400;font-size:.75rem;">(clique para ver histórico)</span></th><th>Horas</th></tr></thead>
+        <tbody>${rowsHTML}</tbody>
         <tfoot><tr><td>Total (${dayCount} dia${dayCount>1?'s':''})</td><td>${formatDuration(grand)}</td></tr></tfoot>
       </table>`;
+
+    container.querySelectorAll('.act-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const act = row.dataset.act;
+        const logRow = container.querySelector(`.log-container[data-act="${CSS.escape(act)}"]`);
+        const arrow  = container.querySelector(`.toggle-arrow[data-act="${CSS.escape(act)}"]`);
+        if (!logRow) return;
+        const open = logRow.style.display !== 'none';
+        logRow.style.display = open ? 'none' : '';
+        if (arrow) arrow.style.transform = open ? '' : 'rotate(90deg)';
+      });
+    });
 
     renderChart(list, currentPeriod, ref);
   }
